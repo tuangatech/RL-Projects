@@ -211,6 +211,8 @@ With these components you’ll get a robust, sample‐efficient Gomoku agent cap
 - Reward Shaping : Includes a heuristic evaluation (_evaluate_board) to provide intermediate rewards, which helps alleviate sparse rewards during training.
 - Invalid Move Handling : Penalizes invalid moves (reward = -1.0) and terminates the episode, ensuring the agent learns to avoid such actions.
 - **Precomputing valid actions** avoids repeatedly scanning the board for empty cells. Incremental updates ensure accuracy while minimizing overhead.
+- A pattern "-XX-" can be substring of "--XX-" and "-XX--" and be counted as 2.
+- test_reward.py to verify, all of the sudden, loss curve becomes unbelievable
 - (Cache result for _check_line() to avoid recalculating threats for cells that haven't changed since the last move, but Clear the cache after each move to ensure accuracy)
 - Cache line result. Clear caches in a region of 3x3 around the last move.
 
@@ -229,6 +231,8 @@ With these components you’ll get a robust, sample‐efficient Gomoku agent cap
   - The immediate reward received after taking an action.
   - The discounted maximum Q-value for the next state (estimated by the target network).
 - The goal of reinforcement learning is to **train the Q-network to approximate the true Q-values** for all state-action pairs. By minimizing the loss between the predicted Q-values (q_vals) and the target Q-values (targets), the Q-network learns to make better predictions over time.
+- Double DQN: Using the online network to select the action for the target calculation helps reduce overestimation bias. Good.
+- Valid Move Masking: Absolutely essential for board games. Preventing the agent from choosing invalid moves and masking their Q-values correctly is vital. Your implementation of setting Q-values to -1e10 for invalid moves in the act function is correct.
 
 ### Training DQN Agent
 

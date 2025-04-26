@@ -162,7 +162,7 @@ class DQNAgent:
             # Compute the target Q-values using the Bellman equation
             # targets = rewards + self.gamma * max_next_q_vals * (~dones)
             targets = rewards + self.gamma * target_q * (~dones)
-            targets = torch.clamp(targets, -10, 10)     # gradient clipping to prevent exploding gradients
+            targets = torch.clamp(targets, -2, 2)     # gradient clipping to prevent exploding gradients (targets, -10, 10)
 
         # Computes the loss between the predicted Q-values and the target Q-values.
         loss = self.loss_fn(q_vals, targets)
