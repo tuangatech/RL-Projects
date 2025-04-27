@@ -42,10 +42,6 @@ for episode in tqdm(range(1, Config.EPISODES + 1)):
             # the influence of intermediate rewards, to encourage the agent to focus on winning
             reward_scale = max(0.2, 1 - (episode / Config.EPISODES))  
             reward *= reward_scale
-        # There are might be many LIVE3 and FORK patterns in the game, 
-        # so we need to clip the reward to avoid exploding gradients
-        # Clip rewards to [-1, 1] to normalize reward for stable training
-        reward = np.clip(reward, -1.0, 1.0)
         trajectory.append((state, action, reward, next_state, done))
         state = next_state
 
