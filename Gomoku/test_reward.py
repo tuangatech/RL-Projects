@@ -29,24 +29,11 @@ def test_reward_shaping(env, board, action, expected_reward):
     next_state, reward, done, info = env.step(action)
     print(f"Reward after action: {reward}\n")
     
-    # # Calculate opponent's threat after the move
-    # opponent_threat_after = env._calculate_global_threat(opponent)
-    # player_threat_after = env._calculate_global_threat(-env.current_player)
-    
-    # # Add strategic defense reward
-    # est_reward += opponent_threat_before - opponent_threat_after
-    # est_reward += player_threat_after - player_threat_before
-    # if env._check_fork(row, col, -env.current_player):
-    #     reward += Config.REWARD_FORK
-    
-    # print(f"Opponent's Threat Before: {opponent_threat_before}, After: {opponent_threat_after}")
-    # print(f"Player's Threat Before: {player_threat_before}, After: {player_threat_after}")
-    # print(f"Fork Detected: {env._check_fork(row, col, env.current_player)}")
-
-    # print(f"Board 1:\n{next_state[0]}")
-    # print(f"Board 2:\n{next_state[1]}\n")
     print("Board After Move:")
-    print(next_state[1].astype(np.int32) - next_state[0].astype(np.int32))   
+    if not done:
+        print(next_state[1].astype(np.int32) - next_state[0].astype(np.int32))
+    else: # Game over, no switching turns
+        print(next_state[0].astype(np.int32) - next_state[1].astype(np.int32))
     print(f"Expected Reward: {expected_reward}, Actual Reward: {reward}")
     assert abs(reward - expected_reward) < 1e-2, "Test FAILED !!!\n"
     print("Test PASSED!\n")
@@ -65,61 +52,77 @@ board1 = np.array([
 ])
 player_before = Config.REWARD_LIVE2
 player_after = Config.REWARD_LIVE3 + Config.REWARD_SEMI_OPEN3
+print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2
 opponent_after = 0
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = Config.REWARD_FORK
-expected_reward = (player_after - player_before) + (opponent_before - opponent_after)  + fork
+soon_win = 3*Config.REWARD_SOON_WIN
+block_soon_win = 0
+expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
 test_reward_shaping(env, board1, action=14, expected_reward=expected_reward)
 
 # Test Case 2: Fork Detection
 board2 = np.array([
-    [0, 0, 0, 0, 0, 0],
-    [0, -1, 0, 0, 0, 0],
-    [-1, 1, -1, 1, 0, 0],
-    [0, 1, 1, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [-1, 0, 0, 0, 0, 0]
+    [ 0,  0,  0, 0, 0, 0],
+    [ 0, -1,  0, 0, 0, 0],
+    [-1,  1, -1, 1, 0, 0],
+    [ 0,  1,  1, 0, 0, 0],
+    [ 0,  0,  0, 0, 0, 0],
+    [-1,  0,  0, 0, 0, 0]
 ])
-player_before = 4*Config.REWARD_LIVE2
+player_before = 3*Config.REWARD_LIVE2
 player_after = 2*Config.REWARD_SEMI_OPEN3 + 2*Config.REWARD_LIVE2
+print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2
 opponent_after = Config.REWARD_LIVE2
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = Config.REWARD_FORK
-expected_reward=player_after - player_before + (opponent_before - opponent_after)  + fork
-# test_reward_shaping(env, board2, action=25, expected_reward=expected_reward)
+soon_win = 2*Config.REWARD_SOON_WIN
+block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+test_reward_shaping(env, board2, action=25, expected_reward=expected_reward)
 
-# Test Case 3: Proximity Rewards
+# Test Case 3: Blocking Opponent's soon win
 board3 = np.array([
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 1, 0, 0, 0],
+    [0, 0, 0, 0,  1, 0],
+    [0, 0, 0, 0, -1, 0],
+    [0, 0, 0, 1,  0, 0],
     [0, 0, 0, 0, -1, 0],
     [0, 0, 0, 0, -1, 0],
-    [0, 0, 0, 0, 0, 0]
+    [0, 0, 0, 0,  0, 0]
 ])
 player_before = 0
 player_after = Config.REWARD_LIVE2
+print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2
-opponent_after = Config.REWARD_LIVE2
+opponent_after = 0
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after)  + fork
-# test_reward_shaping(env, board3, action=13, expected_reward=expected_reward)
+soon_win = 0
+block_soon_win = Config.REWARD_BLOCK_SOON_WIN
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+test_reward_shaping(env, board3, action=16, expected_reward=expected_reward)
 
 # Test Case 4: Strategic Defense
 board4 = np.array([
-    [0, 0, 0, 0, 0, 0],
-    [0, 1, 0, 0, 0, 0],
+    [0, 0,  0,  0, 0, 0],
+    [0, 1,  0,  0, 0, 0],
     [0, 0, -1, -1, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, -1, 0, 0],
-    [0, 0, 0, 0, 0, 0]
+    [0, 0,  0,  0, 0, 0],
+    [0, 0,  0, -1, 0, 0],
+    [0, 0,  0,  0, 0, 0]
 ])
 player_before = 0
 player_after = Config.REWARD_LIVE2
+print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2
 opponent_after = 0
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after)  + fork
+soon_win = 0
+block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
 test_reward_shaping(env, board4, action=13, expected_reward=expected_reward)
 
 # Test Case 5: Full Board Evaluation
@@ -133,8 +136,12 @@ board5 = np.array([
 ])
 player_before = Config.REWARD_SEMI_OPEN3
 player_after = Config.REWARD_WIN
+print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2 + Config.REWARD_LIVE2
 opponent_after = Config.REWARD_LIVE2
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork
+soon_win = 0
+block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
 test_reward_shaping(env, board5, action=2, expected_reward=Config.REWARD_WIN)
