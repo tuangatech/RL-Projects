@@ -215,12 +215,17 @@ With these components you’ll get a robust, sample‐efficient Gomoku agent cap
 - test_reward.py to verify, all of the sudden, loss curve becomes unbelievable
 - (Cache result for _check_line() to avoid recalculating threats for cells that haven't changed since the last move, but Clear the cache after each move to ensure accuracy)
 - Cache line result. Clear caches in a region of 3x3 around the last move.
+- 4 channels with 2 additional ones for threat_maps. Observation Enrichment (Adding Strategic Features): This involves modifying the environment's observation space to include more informative channels that the agent can directly use. We'll add channels for potential immediate winning moves (creating a 4-in-a-row) for both the current player and the opponent.
+- More checking (for reward shaping, threat_map), slower
+- Loss curve has any meaning? Not performance related. It tracks the training loss (typically MSE loss) between the predicted Q-values and the target Q-values. A low loss means:→ the network is getting better at fitting the targets it's given during training. It only tells you how well your model is fitting the experience data (replay buffer) it has seen. BUT — it does not guarantee the agent plays well. It says nothing about: Whether the experience was good. Whether the learned policy is actually strategic.
+- Reduce epsilon decay rate, plot epsilon
 
 
 ### Build a Deep Q-Network (DQN) Agent
 
 **DQN**
 - Enable Dropout to help reduce overfitting, especially since your board is small (36 actions max), and the model can overfit easily.
+- Now your network receives direct information about where winning moves are possible for both players, which can significantly help it learn crucial strategies like blocking opponent threats and recognizing winning opportunities.
 
 **dqn_agent.py**
 - State is represented as a 3D tensor with shape (2, board_size, board_size)

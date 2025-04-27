@@ -6,15 +6,8 @@ class Config:
     REWARD_DRAW = 0.0               # Score for drawing the game
     REWARD_FORK = 0.3               # Score for a fork (2 threats at once)
     REWARD_INVALID_MOVE = -1.0      # Score for invalid move
-    # REWARD_LENGTH2 = 0.03           # Score for 2 stones in a row, 2 open ends
-    # REWARD_LENGTH3 = 0.1            # Score for 3 stones in a row, 1 open end
-    # REWARD_LENGTH4 = 0.4            # Score for 3 stones in a row, 2 open ends
-    # REWARD_PROXIMITY = 0.01         # Score for proximity to opponent's stones
-    # IMPACT_RADIUS = 3               # Consider 1 move impacts 3x3 area around it, so clear cache in that 3x3 area
 
-    # Define scores for different patterns - these are heuristic values, tune them!
-    # The values represent the contribution of finding *one instance* of this pattern.
-    # The relative values are important: Live 3 > Semi-Open 4 > Semi-Open 3 > Live 2
+    # The relative values are important: Live 3 > Semi-Open 3 > Live 2
     REWARD_LIVE2 = 0.03       # -XX-
     REWARD_SEMI_OPEN3 = 0.1   # -XXXo or oXXX-
     REWARD_LIVE3 = 0.4        # -XXX- (Strong threat!)
@@ -35,11 +28,12 @@ class Config:
     CHECK_SEQUENCE_LENGTH = 5 # 5 is the maximum length of PATTERN_SCORES keys
 
     # Training parameters
-    EPISODES = 30000                # Number of training episodes 10000
-    BATCH_SIZE = 128                 # Batch size for training 64
+    EPISODES = 20000                # Number of training episodes 10000
+    BATCH_SIZE = 96                 # Batch size for training 64
     REPLAY_CAPACITY = 10000         # Replay buffer capacity 10000 transitions
     TRAIN_START = 1000              # Start training after this many samples in the buffer
     TARGET_UPDATE = 300             # Update target network every TARGET_UPDATE episodes 100
+    PLAY_AGENT_FREQ = EPISODES // 5   # Play against the bot every PLAY_BOT_FREQ episodes to monitor performance
     
     # Neural network parameters
     LEARNING_RATE = 1e-4            # Learning rate for the optimizer
@@ -50,6 +44,6 @@ class Config:
     # RL parameters
     GAMMA = 0.99                    # Discount factor for future rewards
     EPSILON_START = 1.0             # Initial exploration rate
-    EPSILON_MIN = 0.05              # Minimum exploration rate
-    EPSILON_DECAY = 0.99995         # Decay rate for exploration
+    EPSILON_MIN = 0.1               # Minimum exploration rate
+    EPSILON_DECAY = 0.9999          # Decay rate for exploration
     

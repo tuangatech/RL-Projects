@@ -98,14 +98,59 @@ class GomokuEnv(gym.Env):
 
     # Generates the observation (state) for the current player
     def _get_obs(self):
-        # Two planes: one for current player's stones, one for opponent's
+        """
+        Returns the current observation including raw board state and threat maps.
+        Shape: (num_channels, board_size, board_size)
+        Channels: [Current Player Stones, Opponent Stones, Current Player Win Threat, Opponent Win Threat]
+        """
+        obs_raw = np.zeros((2, self.board_size, self.board_size), dtype=np.uint8)
+        obs_raw[0, self.board == 1] = 1 # Player 1's stones
+        obs_raw[1, self.board == -1] = 1 # Player -1's stones
+
+        current_player_threat_map = self._get_win_threat_map(self.current_player)
+        opponent_threat_map = self._get_win_threat_map(-self.current_player)
+
+        # Stack the channels. Ensure current player's view is always first.
         if self.current_player == 1:
-            current = (self.board == 1).astype(np.uint8)
-            opponent = (self.board == -1).astype(np.uint8)
-        else:
-            current = (self.board == -1).astype(np.uint8)
-            opponent = (self.board == 1).astype(np.uint8)
-        return np.stack([current, opponent])  # stack the two planes (2, board_size, board_size)
+            obs = np.stack([
+                obs_raw[0],               # P1 Stones (Current)
+                obs_raw[1],               # P-1 Stones (Opponent)
+                current_player_threat_map, # P1 Win Threat (Current)
+                opponent_threat_map       # P-1 Win Threat (Opponent)
+            ], axis=0)
+        else: # self.current_player == -1
+            obs = np.stack([
+                obs_raw[1],               # P-1 Stones (Current)
+                obs_raw[0],               # P1 Stones (Opponent)
+                current_player_threat_map, # P-1 Win Threat (Current)
+                opponent_threat_map       # P1 Win Threat (Opponent) - Note: Threat maps are calculated for the absolute player
+            ], axis=0)
+
+        # Ensure the threat maps in the observation are always from the perspective
+        # of the channels they are paired with (channel 0/1 is current/opponent).
+        # Let's adjust the stacking slightly for clarity:
+        p1_stones = (self.board == 1).astype(np.uint8)
+        p_minus1_stones = (self.board == -1).astype(np.uint8)
+        p1_threat = self._get_win_threat_map(1)
+        p_minus1_threat = self._get_win_threat_map(-1)
+
+        if self.current_player == 1:
+            obs = np.stack([
+                p1_stones,         # Channel 0: Current Player Stones
+                p_minus1_stones,   # Channel 1: Opponent Stones
+                p1_threat,         # Channel 2: Current Player Win Threat
+                p_minus1_threat    # Channel 3: Opponent Win Threat
+            ], axis=0)
+        else: # self.current_player == -1
+            obs = np.stack([
+                p_minus1_stones,   # Channel 0: Current Player Stones
+                p1_stones,         # Channel 1: Opponent Stones
+                p_minus1_threat,   # Channel 2: Current Player Win Threat
+                p1_threat          # Channel 3: Opponent Win Threat
+            ], axis=0)
+
+
+        return obs
 
     # Check if the current player has won by placing a stone at (row, col)
     def _check_win(self, row, col, player):
@@ -311,6 +356,35 @@ class GomokuEnv(gym.Env):
         # containing significant threats (Live 3 or Semi-Open 4).
         return fork_threat_count >= 2
     
+    def _check_win_threat(self, r, c, player):
+        """
+        Checks if placing a stone at (r, c) results in a win for the player.
+        Assumes (r, c) is currently empty.
+        """
+        # Temporarily place the stone
+        self.board[r, c] = player
+        win = self._check_win(r, c, player)
+        # Remove the stone
+        self.board[r, c] = 0
+        return win
+    
+
+    def _get_win_threat_map(self, player):
+        """
+        Creates a binary map indicating where the player can win immediately.
+        """
+        threat_map = np.zeros((self.board_size, self.board_size), dtype=np.uint8)
+        board_size = self.board_size
+
+        # Iterate through all empty cells
+        empty_cells = np.argwhere(self.board == 0)
+
+        for r, c in empty_cells:
+            if self._check_win_threat(r, c, player):
+                threat_map[r, c] = 1
+
+        return threat_map
+
     
     # Simple reward shaping: +0.01 if 2 or 3 in a row with open ends, -0.01 if opponent has it
     # def _check_threat(self, p):
@@ -333,73 +407,73 @@ class GomokuEnv(gym.Env):
         
     # Check if there are 'length' stones in a row and at least one open end
     # This function is used to evaluate the board state
-    def _check_line(self, player, length, open_ends, r, c):
-        # Generate a unique key for the line check
-        cache_key = (player, length, open_ends, r, c)
-        if cache_key in self._line_cache:
-            return self._line_cache[cache_key]
+    # def _check_line(self, player, length, open_ends, r, c):
+    #     # Generate a unique key for the line check
+    #     cache_key = (player, length, open_ends, r, c)
+    #     if cache_key in self._line_cache:
+    #         return self._line_cache[cache_key]
 
-        result = False
+    #     result = False
 
-        # Check in all four directions
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
-            count = 1
-            open_end_pos = False
-            open_end_neg = False
+    #     # Check in all four directions
+    #     for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+    #         count = 1
+    #         open_end_pos = False
+    #         open_end_neg = False
 
-            # Check in the positive direction
-            for k in range(1, length):
-                nr = r + k * dr
-                nc = c + k * dc
-                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                    if self.board[nr][nc] == player:
-                        count += 1
-                    elif self.board[nr][nc] == 0:
-                        open_end_pos = True
-                    else:
-                        break
-                else:
-                    open_end_pos = True
-                    break
+    #         # Check in the positive direction
+    #         for k in range(1, length):
+    #             nr = r + k * dr
+    #             nc = c + k * dc
+    #             if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+    #                 if self.board[nr][nc] == player:
+    #                     count += 1
+    #                 elif self.board[nr][nc] == 0:
+    #                     open_end_pos = True
+    #                 else:
+    #                     break
+    #             else:
+    #                 open_end_pos = True
+    #                 break
 
-            # Check in the negative direction
-            for k in range(1, length):
-                nr = r - k * dr
-                nc = c - k * dc
-                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                    if self.board[nr][nc] == player:
-                        count += 1
-                    elif self.board[nr][nc] == 0:
-                        open_end_neg = True
-                    else:
-                        break
-                else:
-                    open_end_neg = True
-                    break
+    #         # Check in the negative direction
+    #         for k in range(1, length):
+    #             nr = r - k * dr
+    #             nc = c - k * dc
+    #             if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+    #                 if self.board[nr][nc] == player:
+    #                     count += 1
+    #                 elif self.board[nr][nc] == 0:
+    #                     open_end_neg = True
+    #                 else:
+    #                     break
+    #             else:
+    #                 open_end_neg = True
+    #                 break
 
-            # Check if the line satisfies the required conditions
-            if count == length:
-                if open_ends == 1 and (open_end_pos or open_end_neg):
-                    result = True
-                    break
-                if open_ends == 2 and open_end_pos and open_end_neg:
-                    result = True
-                    break
-        # Cache the result for future reference
-        self._line_cache[cache_key] = result
+    #         # Check if the line satisfies the required conditions
+    #         if count == length:
+    #             if open_ends == 1 and (open_end_pos or open_end_neg):
+    #                 result = True
+    #                 break
+    #             if open_ends == 2 and open_end_pos and open_end_neg:
+    #                 result = True
+    #                 break
+    #     # Cache the result for future reference
+    #     self._line_cache[cache_key] = result
 
-        return result
+    #     return result
 
     # Encourage moves near existing stones (player's or opponent's)
     # This function is used to promote more strategic placements of stones
-    def _proximity_reward(self):
-        row, col = divmod(self.last_action, self.board_size)
-        start_r, end_r = max(0, row - 1), min(self.board_size, row + 2)
-        start_c, end_c = max(0, col - 1), min(self.board_size, col + 2)
-        neighborhood = self.board[start_r:end_r, start_c:end_c]
-        if np.any(neighborhood != 0):
-            return Config.REWARD_PROXIMITY # Small reward for proximity to existing stones
-        return 0.0
+    # def _proximity_reward(self):
+    #     row, col = divmod(self.last_action, self.board_size)
+    #     start_r, end_r = max(0, row - 1), min(self.board_size, row + 2)
+    #     start_c, end_c = max(0, col - 1), min(self.board_size, col + 2)
+    #     neighborhood = self.board[start_r:end_r, start_c:end_c]
+    #     if np.any(neighborhood != 0):
+    #         return Config.REWARD_PROXIMITY # Small reward for proximity to existing stones
+    #     return 0.0
 
     # def _check_fork(self, row, col, player):
     #     """
@@ -451,18 +525,19 @@ class GomokuEnv(gym.Env):
         
     #     return False  # A fork is created if there are at least two open-ended lines of length 3
     
-    def _clear_cache_around(self):
-        """
-        Clear cache entries for cells within a radius of 3x3 around the given cell.
-        This ensures that affected areas are recalculated while retaining results for unchanged cells.
-        """
-        row, col = divmod(self.last_action, self.board_size)  # Get the last move's position
-        radius = Config.IMPACT_RADIUS  # Radius around the last move (row, col) to clear
-        for r in range(max(0, row - radius), min(self.board_size, row + radius + 1)):
-            for c in range(max(0, col - radius), min(self.board_size, col + radius + 1)):
-                for player in [-1, 1]:
-                    for length in [2, 3]:  # Lengths relevant to threat evaluation, 4 is not used in this context of 6x6 board
-                        for open_ends in [1, 2]:  # Open-end conditions
-                            cache_key = (player, length, open_ends, r, c)
-                            if cache_key in self._line_cache:
-                                del self._line_cache[cache_key]
+    # def _clear_cache_around(self):
+    #     """
+    #     Clear cache entries for cells within a radius of 3x3 around the given cell.
+    #     This ensures that affected areas are recalculated while retaining results for unchanged cells.
+    #     """
+    #     row, col = divmod(self.last_action, self.board_size)  # Get the last move's position
+    #     radius = Config.IMPACT_RADIUS  # Radius around the last move (row, col) to clear
+    #     for r in range(max(0, row - radius), min(self.board_size, row + radius + 1)):
+    #         for c in range(max(0, col - radius), min(self.board_size, col + radius + 1)):
+    #             for player in [-1, 1]:
+    #                 for length in [2, 3]:  # Lengths relevant to threat evaluation, 4 is not used in this context of 6x6 board
+    #                     for open_ends in [1, 2]:  # Open-end conditions
+    #                         cache_key = (player, length, open_ends, r, c)
+    #                         if cache_key in self._line_cache:
+    #                             del self._line_cache[cache_key]
+    

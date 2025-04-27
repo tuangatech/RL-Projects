@@ -12,9 +12,11 @@ class DQN(nn.Module):
     def __init__(self, board_size):
         super(DQN, self).__init__()
         self.board_size = board_size
+        # Input channels should be 4 (2 raw board + 2 threat maps)
+        input_channels = 4
 
         # Convolutional layers with batch normalization to extract spatial features
-        self.conv1 = nn.Conv2d(in_channels=2, out_channels=32, kernel_size=3, padding=1)  # Input: [B, 2, 6, 6]
+        self.conv1 = nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, padding=1)  # Input: [B, 4, 6, 6]
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(64)

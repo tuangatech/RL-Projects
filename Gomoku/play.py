@@ -10,7 +10,7 @@ from game_config import Config
 CELL_SIZE = 100
 MARGIN = 30  # Increased margin for better spacing
 WINDOW_SIZE = CELL_SIZE * Config.BOARD_SIZE + 2 * MARGIN
-LINE_COLOR = (50, 50, 50)  # Dark gray for a professional look
+LINE_COLOR = (50, 50, 50)
 BG_COLOR = (240, 240, 240)  # Light gray background for contrast
 X_COLOR = (200, 0, 0)  # Red for X
 O_COLOR = (0, 100, 200)  # Blue for O

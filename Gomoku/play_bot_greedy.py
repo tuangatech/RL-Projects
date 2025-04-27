@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from game_config import Config
 
-def evaluate(dqn_agent, dqn_first=True, num_games=100):
+def evaluate(dqn_agent, dqn_first=True, num_games=50):
     env = GomokuEnv(board_size=Config.BOARD_SIZE, win_length=Config.WIN_LENGTH)
     target_agent = RandomAgent(board_size=6)
 
@@ -24,7 +24,12 @@ def evaluate(dqn_agent, dqn_first=True, num_games=100):
 
             obs, reward, done, info = env.step(action)
 
+        # At the end of step(action), player was witched self.current_player *= -1
+        # When dqn_first=True, the DQN agent plays as Player 1 (current_player == 1)
+        # When dqn_first=False, the DQN agent plays as Player 2 (current_player == -1)
         if reward == 1:
+            # env.current_player == -1 means the last move was made by the DQN agent
+            # env.current_player == 1 means the last move was made by the target agent
             if (env.current_player == -1 and dqn_first) or (env.current_player == 1 and not dqn_first):
                 results["dqn_win"] += 1
             else:
@@ -39,7 +44,7 @@ def evaluate(dqn_agent, dqn_first=True, num_games=100):
 
 
 if __name__ == "__main__":    
-    dqn_agent = DQNAgent(board_size=6)
+    dqn_agent = DQNAgent(board_size=Config.BOARD_SIZE)
     dqn_agent.epsilon = 0.0  # no exploration during eval
     dqn_agent.q_net.load_state_dict(torch.load("dqn_gomoku.pt"))
     dqn_agent.q_net.eval()  # set the model to evaluation mode

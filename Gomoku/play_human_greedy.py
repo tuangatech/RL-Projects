@@ -8,12 +8,13 @@ from game_config import Config
 SCREEN_WIDTH = 600
 SCREEN_HEIGHT = 600
 CELL_SIZE = SCREEN_WIDTH // Config.BOARD_SIZE
-LINE_COLOR = (0, 0, 0)  # Black
+LINE_COLOR = (50, 50, 50)  # Dark gray for grid lines
+MARGIN = 30  # Margin for the board
 PLAYER_COLORS = {
-    1: (255, 0, 0),  # Red for Player 1 (Human)
-    -1: (0, 0, 255)  # Blue for Player 2 (Greedy Agent)
+    1: (200, 0, 0),  # Red for Player 1 (Human)
+    -1: (0, 100, 200)  # Blue for Player 2 (Greedy Agent)
 }
-BACKGROUND_COLOR = (255, 255, 255)  # White background
+BACKGROUND_COLOR = (240, 240, 240)  # White background
 
 # Initialize Pygame
 pygame.init()
@@ -33,7 +34,7 @@ def draw_board():
 # Draw a stone on the board
 def draw_stone(row, col, player):
     center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-    radius = CELL_SIZE // 2 - 5
+    radius = CELL_SIZE // 4
     pygame.draw.circle(screen, PLAYER_COLORS[player], center, radius)
     pygame.display.flip()
 
