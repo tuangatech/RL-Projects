@@ -18,9 +18,9 @@ class GomokuEnv(gym.Env):
         self.win_length = win_length
         self.action_space = spaces.Discrete(board_size * board_size) # all possible moves
 
-        # 2 channels: [player's stones, opponent's stones]
+        # 4 channels: [player's stones, opponent's stones, player's win threat, opponent's win threat]
         self.observation_space = spaces.Box(
-            low=0, high=1, shape=(2, board_size, board_size), dtype=np.uint8
+            low=0, high=1, shape=(4, board_size, board_size), dtype=np.uint8
         )
 
         self.reset() # Initialize the environment
@@ -51,25 +51,33 @@ class GomokuEnv(gym.Env):
         # Place the current player's stone on the board
         self.board[row, col] = self.current_player
         # Remove the chosen action from valid actions set
-        self.valid_actions.remove(action)
+        if action in self.valid_actions: # Defensive check
+             self.valid_actions.remove(action)
         
+        # --- Check for Terminal States AFTER placing the stone ---
+
         # Win check
         if self._check_win(row, col, self.current_player):
             self.done = True
-            return self._get_obs(), Config.REWARD_WIN, True, {}
+            return self._get_obs(), Config.REWARD_WIN, self.done, {"winner": self.current_player}
             
         # Draw check
         if len(self.valid_actions) == 0:  # Board is full
             self.done = True
-            return self._get_obs(), Config.REWARD_DRAW, True, {}
+            return self._get_obs(), Config.REWARD_DRAW, self.done, {"draw": True}
         
+        # --- If the game is not terminal (neither win nor draw from this move) ---
         # After move: update threats       
         player_threat_after = self._calculate_global_threat(self.current_player)
         opponent_threat_after = self._calculate_global_threat(opponent)
+        # Count where the player who just moved can win next turn
         win_threats_after = np.sum(self._get_win_threat_map(self.current_player))
+        # Count where the *opponent* (next player) can win next turn
         block_threats_after = np.sum(self._get_win_threat_map(opponent))
         # How many opponent winning chances we blocked
         blocked_threats = block_threats_before - block_threats_after
+
+        # Reward Calculation Components (based on the player who just moved)
 
         # Reward for increasing own threats
         player_threat_delta_reward = player_threat_after - player_threat_before
@@ -83,18 +91,26 @@ class GomokuEnv(gym.Env):
         soon_win_reward = Config.REWARD_SOON_WIN * win_threats_after if win_threats_after > 0 else 0
         block_soon_win_reward = Config.REWARD_BLOCK_SOON_WIN * blocked_threats if blocked_threats > 0 else 0
 
-        reward = player_threat_delta_reward + opponent_threat_delta_reward + fork_reward + passive_reward + soon_win_reward + block_soon_win_reward
+        reward = (player_threat_delta_reward + 
+                  opponent_threat_delta_reward + 
+                  fork_reward + 
+                  passive_reward + 
+                  soon_win_reward + 
+                  block_soon_win_reward)
         # print(f"Reward: {reward}, \n" \
         #       f"Player Threat Delta: {player_threat_delta_reward}, Opponent Threat Delta: {opponent_threat_delta_reward}, \n" \
         #       f"Fork: {fork_reward}, Soon Win: {soon_win_reward}, Block Soon Win: {block_soon_win_reward}")
         
         # There are might be some LIVE3 and FORK patterns in the game, 
         # so we need to clip the reward to avoid exploding gradients, to have stable training
-        reward = np.clip(reward, -1.0, 1.0)
+        # Too Aggressive Reward Clipping. Just apply clipping on target value, not on the reward itself.
+        # reward = np.clip(reward, -1.0, 1.0)
 
-        self.current_player *= -1  # switch turns to self-play
+        # Self-play training: switch turns to the other player
+        # The reward is always from the perspective of the current player
+        self.current_player *= -1  
 
-        return self._get_obs(), reward, False, {} # return observation (current state)
+        return self._get_obs(), reward, self.done, {} # return observation (current state)
 
     # Render the current state of the board in a human-readable format
     # This function is useful for debugging and visualization
@@ -222,21 +238,26 @@ class GomokuEnv(gym.Env):
         directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
         board_size = self.board_size
         max_pattern_length = max(len(p) for p in Config.PATTERN_SCORES)
+        min_pattern_length = min(len(p) for p in Config.PATTERN_SCORES)        
 
         for r in range(board_size):
             for c in range(board_size):
                 for dr, dc in directions:
                     sequence = self._get_sequence(r, c, dr, dc, max_pattern_length, player)
 
-                    if len(sequence) < 2:
+                    # Sequence must be at least long enough to contain any pattern
+                    if len(sequence) < min_pattern_length:
                         continue
-
+                    
+                    # Find all occurrences of each pattern using regex within the sequence
                     for pattern, regex in COMPILED_PATTERNS.items():
                         for match in regex.finditer(sequence):
                             i = match.start()
                             start_r = r + i * dr
                             start_c = c + i * dc
+                            # Create a unique key for this specific pattern instance found on the board.
                             key = (pattern, start_r, start_c, dr, dc)
+                            # Add the key to the set. Set handles uniqueness automatically.
                             scored_patterns.add(key)
 
         return sum(Config.PATTERN_SCORES[pattern] for pattern, *_ in scored_patterns)
