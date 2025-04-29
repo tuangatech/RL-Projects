@@ -12,22 +12,37 @@ class DQN(nn.Module):
     def __init__(self, board_size):
         super(DQN, self).__init__()
         self.board_size = board_size
-        # Input channels should be 4 (2 raw board + 2 threat maps)
+        self.action_size = board_size * board_size # Store action size for convenience
+
+        # Input channels should be 4 (2 raw boards + 2 threat maps)
         input_channels = 4
 
         # Convolutional layers with batch normalization to extract spatial features
         self.conv1 = nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, padding=1)  # Input: [B, 4, 6, 6]
         self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)   # Output: [B, 64, 6, 6]
         self.bn2 = nn.BatchNorm2d(64)
         self.activation = nn.LeakyReLU(negative_slope=0.01)
+        self.dropout = nn.Dropout(0.3) # Apply after shared FC
 
         # Fully connected layers with dropout
         flattened_size = 64 * board_size * board_size
-        self.fc1 = nn.Linear(flattened_size, 128)
-        self.dropout = nn.Dropout(0.3)  # Dropout layer to prevent overfitting
-        self.fc2 = nn.Linear(128, 128)
-        self.out = nn.Linear(128, board_size * board_size)
+        # --- Shared Fully Connected Layer (Optional but common) ---
+        self.fc_shared = nn.Linear(flattened_size, 128)
+
+        # --- Value Stream ---
+        # Takes the output of the shared layer and outputs a single value (for the state)
+        # You can use a new layer or repurpose fc2, but let's create new ones for clarity
+        self.fc_value_stream = nn.Linear(128, 1) # Outputs state value [B, 1]
+
+        # --- Advantage Stream ---
+        # Takes the output of the shared layer and outputs an advantage for each action
+        # You can use a new layer or repurpose fc2/out, but let's create new ones
+        self.fc_advantage_stream = nn.Linear(128, self.action_size) # Outputs advantages [B, action_size]
+
+        # self.dropout = nn.Dropout(0.3)  # Dropout layer to prevent overfitting
+        # self.fc2 = nn.Linear(128, 128)
+        # self.out = nn.Linear(128, board_size * board_size)
 
         self._init_weights()  # Initialize weights using Kaiming normal initialization
 
@@ -39,11 +54,34 @@ class DQN(nn.Module):
         # Flatten for fully connected layers
         x = x.view(x.size(0), -1) # Flatten the tensor to [B, 64 * board_size * board_size]
 
-        # Fully connected layers with dropout
-        x = self.activation(self.fc1(x)) # Output: [B, 128]
-        x = self.dropout(x)      # Apply dropout
-        x = self.activation(self.fc2(x))
-        return self.out(x)  # Output: [B, board_size * board_size]
+        # --- Shared Fully Connected Layer (Same as before) ---
+        x = self.activation(self.fc_shared(x)) # Or self.activation(self.fc1(x)) if you kept the name
+        x = self.dropout(x) # Apply dropout after the shared layer
+
+        # --- Split into Value and Advantage Streams ---
+
+        # Value Stream
+        # Pass through the value stream layers. No activation on the final output.
+        value = self.fc_value_stream(x) # Output shape: [B, 1]
+
+        # Advantage Stream
+        # Pass through the advantage stream layers. No activation on the final output.
+        advantage = self.fc_advantage_stream(x) # Output shape: [B, action_size]
+
+        # --- Combine Value and Advantage to get Q-values ---
+
+        # Calculate the mean of the advantages across the action dimension for each state in the batch.
+        # The result will have shape [B, 1]
+        mean_advantage = advantage.mean(dim=1, keepdim=True)
+
+        # Combine using the Dueling formula: Q(s, a) = V(s) + (A(s, a) - mean(A(s, a')) )
+        # value shape: [B, 1], advantage shape: [B, action_size], mean_advantage shape: [B, 1]
+        # Broadcasting in PyTorch handles the addition correctly. V and mean_advantage
+        # will be broadcast to the shape of advantage for the operations.
+        q_values = value + advantage - mean_advantage
+
+        # The output shape is [B, action_size], which is exactly what DQNAgent expects.
+        return q_values
 
     # Initialize weights using Kaiming normal initialization
     def _init_weights(self):
@@ -150,21 +188,23 @@ class DQNAgent:
         # size of q_vals is (batch_size, 1) - squeezed to (batch_size,)
         q_vals = q_values.gather(1, actions.unsqueeze(1)).squeeze()
 
-        # DQN target: use main net for argmax, target net for Q-value
-        # mitigates overestimation bias by decoupling action selection and evaluation
         with torch.no_grad():
-            # Use q_net to select best next actions (Double DQN trick)
+            # Double DQN trick to mitigate the overestimation bias of vanilla DQN 
+            # by decoupling the action selection from the value evaluation
+            # 1. Use the online network (`self.q_net`) to select the best action in the next state
             next_q_values = self.q_net(next_states)
             next_actions = torch.argmax(next_q_values, dim=1)
 
-            # Use target_net to evaluate the Q-values of the selected actions
+            # 2. Use the target network (`self.target_net`) to evaluate the Q-value of the action selected in step 1
             next_target_q = self.target_net(next_states)
             target_q = next_target_q.gather(1, next_actions.unsqueeze(1)).squeeze(1)
             # max_next_q_vals = next_q_values.max(dim=1)[0]
             # Compute the target Q-values using the Bellman equation
-            # targets = rewards + self.gamma * max_next_q_vals * (~dones)
+            # with self.gamma * target_q * (~dones) is the discounted future reward for the next state
+            # `targets` represents the TD (Temporal Difference) target, which is the 
+            # best estimate of the total return for the next state
             targets = rewards + self.gamma * target_q * (~dones)
-            targets = torch.clamp(targets, -2, 2)     # gradient clipping to prevent exploding gradients (targets, -10, 10)
+            targets = torch.clamp(targets, -1.5, 1.5)     # gradient clipping to prevent exploding gradients (targets, -10, 10)
 
         # Computes the loss between the predicted Q-values and the target Q-values.
         loss = self.loss_fn(q_vals, targets)
@@ -180,6 +220,7 @@ class DQNAgent:
 
         return loss.item()
 
+    # agent shifts from exploring the environment to exploiting over episodes (rather than frames/transitions)
     def decay_epsilon(self):
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
