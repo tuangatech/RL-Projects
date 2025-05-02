@@ -46,21 +46,21 @@ board1 = np.array([
     [ 0,  0,  0, 0, 0, 0],
     [ 0, -1,  0, 0, 0, 0],
     [-1,  0,  0, 1, 1, 0],
-    [ 0,  1, -1, 0, 0, 0],
+    [ 0,  0, -1, 0, 0, 0],
     [ 1,  0, -1, 0, 0, 0],
     [ 0,  0,  0, 0, 0, 0]
 ])
 player_before = Config.REWARD_LIVE2
-player_after = Config.REWARD_LIVE3 + Config.REWARD_SEMI_OPEN3
+player_after =  Config.REWARD_SEMI_OPEN3
 print(f"Player_threat_delta: {player_after - player_before}")
 opponent_before = Config.REWARD_LIVE2
-opponent_after = 0
+opponent_after = Config.REWARD_LIVE2
 print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
-fork = Config.REWARD_FORK
-soon_win = 3*Config.REWARD_SOON_WIN
-block_soon_win = 0
-expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
-test_reward_shaping(env, board1, action=14, expected_reward=expected_reward)
+fork = 0 #Config.REWARD_FORK
+# soon_win = Config.REWARD_SOON_WIN
+# block_soon_win = 0
+expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
+test_reward_shaping(env, board1, action=17, expected_reward=expected_reward)
 
 # Test Case 2: Fork Detection
 board2 = np.array([
@@ -78,31 +78,35 @@ opponent_before = Config.REWARD_LIVE2
 opponent_after = Config.REWARD_LIVE2
 print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = Config.REWARD_FORK
-soon_win = 2*Config.REWARD_SOON_WIN
-block_soon_win = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+# soon_win = Config.REWARD_SOON_WIN
+# block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
 test_reward_shaping(env, board2, action=25, expected_reward=expected_reward)
 
 # Test Case 3: Blocking Opponent's soon win
 board3 = np.array([
     [0, 0, 0, 0,  1, 0],
     [0, 0, 0, 0, -1, 0],
-    [0, 0, 0, 1,  0, 0],
+    [0, 1, 0, 1,  0, 0],
     [0, 0, 0, 0, -1, 0],
     [0, 0, 0, 0, -1, 0],
     [0, 0, 0, 0,  0, 0]
 ])
 player_before = 0
-player_after = Config.REWARD_LIVE2
+player_after = Config.REWARD_LIVE2 + Config.REWARD_GAP4
 print(f"Player_threat_delta: {player_after - player_before}")
-opponent_before = Config.REWARD_LIVE2
+opponent_before = Config.REWARD_LIVE2 + Config.REWARD_GAP4
 opponent_after = 0
 print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-soon_win = 0
-block_soon_win = Config.REWARD_BLOCK_SOON_WIN
-expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+# soon_win = Config.REWARD_SOON_WIN
+# block_soon_win = Config.REWARD_BLOCK_SOON_WIN
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
 test_reward_shaping(env, board3, action=16, expected_reward=expected_reward)
+
+obs = env._get_obs()
+print(f"player map \n{obs[0]}")
+print(f"opponent map \n{obs[1]}")
 
 # Test Case 4: Strategic Defense
 board4 = np.array([
@@ -120,9 +124,9 @@ opponent_before = Config.REWARD_LIVE2
 opponent_after = 0
 print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-soon_win = 0
-block_soon_win = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+# soon_win = 0
+# block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
 test_reward_shaping(env, board4, action=13, expected_reward=expected_reward)
 
 # Test Case 5: Full Board Evaluation
@@ -141,7 +145,101 @@ opponent_before = Config.REWARD_LIVE2 + Config.REWARD_LIVE2
 opponent_after = Config.REWARD_LIVE2
 print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
 fork = 0
-soon_win = 0
-block_soon_win = 0
-expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + soon_win + block_soon_win
+# soon_win = 0
+# block_soon_win = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
 test_reward_shaping(env, board5, action=2, expected_reward=Config.REWARD_WIN)
+
+# Test Case 6: Fork
+board6 = np.array([
+    [1,  1,  0,  0, -1,  0],
+    [0,  0,  1, -1,  0, -1],
+    [0, -1,  1,  0, -1,  0],
+    [0,  0,  0,  0,  0, -1],
+    [0,  0, -1,  0,  1,  0],
+    [0,  0,  0,  0,  0, -1]
+])
+player_before = Config.REWARD_LIVE2
+player_after = 2*Config.REWARD_SEMI_OPEN3
+print(f"Player_threat_delta: {player_after - player_before}")
+opponent_before = Config.REWARD_SEMI_OPEN3 + Config.REWARD_GAP4
+opponent_after = Config.REWARD_GAP4
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
+fork = Config.REWARD_FORK
+# soon_win = Config.REWARD_SOON_WIN
+# block_soon_win = Config.REWARD_BLOCK_SOON_WIN
+expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
+test_reward_shaping(env, board6, action=2, expected_reward=expected_reward)
+
+# Test Case 7: Passive Move
+board7 = np.array([
+    [0, 0,  0,  0, 0, 0],
+    [0, 1,  0,  0, 0, 0],
+    [0, 0, -1, -1, 0, 0],
+    [0, 0,  0,  0, 0, 0],
+    [0, 0,  0, -1, 0, 0],
+    [0, 0,  0,  0, 0, 0]
+])
+player_before = 0
+player_after = 0
+print(f"Player_threat_delta: {player_after - player_before}")
+opponent_before = Config.REWARD_LIVE2
+opponent_after = Config.REWARD_LIVE2
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
+fork = 0
+# soon_win = 0
+# block_soon_win = 0
+passive = Config.REWARD_PASSIVE
+expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork + passive #+ soon_win + block_soon_win
+test_reward_shaping(env, board7, action=4, expected_reward=expected_reward)
+
+# Test Case 8: Sequences in the same line
+board1 = np.array([
+    [ 0,  0,  0, 0, 0, 1],
+    [-1, -1, -1, 0, 1, 0],
+    [ 0,  0,  0, 0, 0, 0],
+    [ 0,  0,  1, 0, 0, 0],
+    [ 0,  1,  0, 0, 0, 0],
+    [ 1,  0,  0, 0, 0, 0]
+])
+player_before = Config.REWARD_SEMI_OPEN3 + Config.REWARD_GAP4 + Config.REWARD_GAP4
+player_after = Config.REWARD_WIN
+print(f"Player_threat_delta: {player_after - player_before}")
+opponent_before = Config.REWARD_SEMI_OPEN3
+opponent_after = Config.REWARD_SEMI_OPEN3
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
+fork = 0
+# soon_win = 0
+# block_soon_win = 0
+expected_reward = (player_after - player_before) + (opponent_before - opponent_after) + fork #+ soon_win + block_soon_win
+test_reward_shaping(env, board1, action=15, expected_reward=Config.REWARD_WIN)
+
+board3 = np.array([
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0]
+])
+
+board3 = np.array([
+    [ 0, 0, 0, 0, 0, 0],
+    [-1, 1, 1, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0, 0],
+    [ 1, 1, 0, 1, 1,-1],
+    [ 0, 0, 0, 0, 0, 0]
+])
+player_before = Config.REWARD_GAP4 + Config.REWARD_GAP4 + Config.REWARD_GAP4
+player_after = Config.REWARD_GAP4 + Config.REWARD_GAP4 + Config.REWARD_GAP4 + Config.REWARD_SEMI_OPEN3
+print(f"Player_threat_delta: {player_after - player_before}")
+opponent_before = 0
+opponent_after = 0
+print(f"Opponent_threat_delta: {opponent_before - opponent_after}")
+fork = 0
+# soon_win = Config.REWARD_SOON_WIN
+# block_soon_win = 0
+passive = 0
+expected_reward = player_after - player_before + (opponent_before - opponent_after) + fork + passive #+ soon_win + block_soon_win
+test_reward_shaping(env, board3, action=9, expected_reward=expected_reward)
