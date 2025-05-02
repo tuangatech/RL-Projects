@@ -9,40 +9,40 @@ from game_config import Config
 class DQN(nn.Module):
     # This is a Convolutional Neural Network (CNN) for DQN
     # defines the neural network architecture used to approximate the Q-values for the DQN agent
+    # Dueling DQN Architecture 
     def __init__(self, board_size):
         super(DQN, self).__init__()
         self.board_size = board_size
         self.action_size = board_size * board_size # Store action size for convenience
 
-        # Input channels should be 4 (2 raw boards + 2 threat maps)
-        input_channels = 4
+        # Input channels should be 2 raw boards, NO threat maps
+        input_channels = 2
 
         # Convolutional layers with batch normalization to extract spatial features
         self.conv1 = nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, padding=1)  # Input: [B, 4, 6, 6]
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)   # Output: [B, 64, 6, 6]
         self.bn2 = nn.BatchNorm2d(64)
+        # self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Add third conv
+        # self.bn3 = nn.BatchNorm2d(128)
         self.activation = nn.LeakyReLU(negative_slope=0.01)
-        self.dropout = nn.Dropout(0.3) # Apply after shared FC
 
-        # Fully connected layers with dropout
+        # Fully connected layers
         flattened_size = 64 * board_size * board_size
         # --- Shared Fully Connected Layer (Optional but common) ---
-        self.fc_shared = nn.Linear(flattened_size, 128)
+        fc_output_size = 128 # Size of the output from the shared layer
+        self.fc_shared = nn.Linear(flattened_size, fc_output_size) # FC layer: 64 * 6*6 = 2304 → 128
+        # self.dropout = nn.Dropout(0.3) # Apply after shared FC
 
         # --- Value Stream ---
         # Takes the output of the shared layer and outputs a single value (for the state)
         # You can use a new layer or repurpose fc2, but let's create new ones for clarity
-        self.fc_value_stream = nn.Linear(128, 1) # Outputs state value [B, 1]
+        self.fc_value_stream = nn.Linear(fc_output_size, 1) # Outputs state value [B, 1]
 
         # --- Advantage Stream ---
         # Takes the output of the shared layer and outputs an advantage for each action
         # You can use a new layer or repurpose fc2/out, but let's create new ones
-        self.fc_advantage_stream = nn.Linear(128, self.action_size) # Outputs advantages [B, action_size]
-
-        # self.dropout = nn.Dropout(0.3)  # Dropout layer to prevent overfitting
-        # self.fc2 = nn.Linear(128, 128)
-        # self.out = nn.Linear(128, board_size * board_size)
+        self.fc_advantage_stream = nn.Linear(fc_output_size, self.action_size) # Outputs advantages [B, action_size]
 
         self._init_weights()  # Initialize weights using Kaiming normal initialization
 
@@ -50,13 +50,14 @@ class DQN(nn.Module):
         # Convolutional layers with batch normalization
         x = self.activation(self.bn1(self.conv1(x))) # Input: [B, 2, 6, 6] -> Output: [B, 32, 6, 6]
         x = self.activation(self.bn2(self.conv2(x))) # Output: [B, 64, 6, 6]
+        # x = self.activation(self.bn3(self.conv3(x))) # Output: [B, 128, 6, 6]
 
         # Flatten for fully connected layers
         x = x.view(x.size(0), -1) # Flatten the tensor to [B, 64 * board_size * board_size]
 
-        # --- Shared Fully Connected Layer (Same as before) ---
-        x = self.activation(self.fc_shared(x)) # Or self.activation(self.fc1(x)) if you kept the name
-        x = self.dropout(x) # Apply dropout after the shared layer
+        # --- Shared Fully Connected Layer ---
+        x = self.activation(self.fc_shared(x))   
+        # x = self.dropout(x) # Apply dropout after the shared layer
 
         # --- Split into Value and Advantage Streams ---
 
@@ -66,7 +67,7 @@ class DQN(nn.Module):
 
         # Advantage Stream
         # Pass through the advantage stream layers. No activation on the final output.
-        advantage = self.fc_advantage_stream(x) # Output shape: [B, action_size]
+        advantage = self.fc_advantage_stream(x)  # Output shape: [B, action_size]
 
         # --- Combine Value and Advantage to get Q-values ---
 
@@ -78,6 +79,7 @@ class DQN(nn.Module):
         # value shape: [B, 1], advantage shape: [B, action_size], mean_advantage shape: [B, 1]
         # Broadcasting in PyTorch handles the addition correctly. V and mean_advantage
         # will be broadcast to the shape of advantage for the operations.
+        # q_values = torch.tanh(value + advantage - mean_advantage)
         q_values = value + advantage - mean_advantage
 
         # The output shape is [B, action_size], which is exactly what DQNAgent expects.
@@ -92,6 +94,8 @@ class DQN(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
 class DQNAgent:
+    toggle1 = True  # For debugging purposes, to print the min/max of targets and Q-values
+    toggle2 = True  # For debugging purposes, to print normalized gradients
     def __init__(self, board_size, device="cuda"):
         self.board_size = board_size
         self.action_size = board_size * board_size
@@ -103,20 +107,27 @@ class DQNAgent:
         # The target network is used to compute target Q-values
         self.q_net = DQN(board_size).to(self.device)
         self.target_net = DQN(board_size).to(self.device)
-        self.update_target()
+        self.soft_update_target()
 
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), weight_decay=1e-4, lr=Config.LEARNING_RATE)
         # Track frames for learning rate scheduling
         self.frame_count = 0    # a frame is an interaction with the environment (transition)
         
-        # Lambda function for learning rate decay
-        # This creates a linear decay from initial LR to minimum LR over specified frames
-        lr_lambda = lambda frame: max(
-            Config.MIN_LEARNING_RATE / Config.LEARNING_RATE,  # Minimum LR ratio
-            1.0 - max(0, frame - Config.LR_DECAY_START_FRAME) / 
-                 (Config.TOTAL_FRAMES - Config.LR_DECAY_START_FRAME)
-        )        
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_lambda)
+        # --- Learning Rate Decay using LinearLR ---
+        # We want to decay the learning rate linearly from Config.LEARNING_RATE
+        # to Config.MIN_LEARNING_RATE over a specified number of steps.
+        # Calculate the number of steps over which decay occurs
+        decay_steps = max(0, Config.TOTAL_FRAMES - Config.LR_DECAY_START_FRAME)
+
+        # Calculate the end learning rate ratio relative to the initial LR
+        end_lr_ratio = Config.MIN_LEARNING_RATE / Config.LEARNING_RATE
+
+        self.scheduler = torch.optim.lr_scheduler.LinearLR(
+            self.optimizer,
+            start_factor=1.0, # Start at the initial LR
+            end_factor=end_lr_ratio, # Decay to the minimum LR ratio
+            total_iters=decay_steps # Number of steps over which decay happens
+        )
 
         self.loss_fn = nn.MSELoss()
 
@@ -124,11 +135,6 @@ class DQNAgent:
         self.epsilon = Config.EPSILON_START         # Initial exploration rate
         self.epsilon_min = Config.EPSILON_MIN       # Minimum exploration rate
         self.epsilon_decay = Config.EPSILON_DECAY   # Decay rate for exploration 0.995
-
-    # Update the target network with the weights of the Q-network
-    # This is done periodically to stabilize training
-    def update_target(self):
-        self.target_net.load_state_dict(self.q_net.state_dict())
 
     # Selects an action based on the current state
     # Epsilon-greedy strategy: with probability epsilon, select a random action (exploration)
@@ -139,7 +145,6 @@ class DQNAgent:
             epsilon = self.epsilon
         # Selects a random valid action (exploration)
         if np.random.rand() < epsilon:
-            # Masked random move
             # state[0], state[1] are binary matrices of size 6x6 indicating where stones are located
             # Flatten the state (a vector of size 36) and find valid actions (where the sum of both matrices is 0)
             # This means that the cell is empty and can be played
@@ -155,16 +160,13 @@ class DQNAgent:
         # The mask is a tensor of size 36, where 1 indicates a valid move and 0 indicates an invalid move
         # The mask is created by checking where the sum of both matrices is 0 (indicating an empty cell)
         mask = torch.FloatTensor((state[0] + state[1]).reshape(-1) == 0).to(self.device)
-        q_values[mask == 0] = -1e10  # mask == 0 identifies the indices of occupied cells
+        q_values[mask == 0] = -100  # mask == 0 identifies the indices of occupied cells
 
-        return torch.argmax(q_values).item()
+        # Select the action with the highest Q-value among valid actions
+        action = torch.argmax(q_values).item()
 
-    # Update the learning rate scheduler
-    # This is called every time a batch is processed
-    def update_lr_scheduler(self):
-        """Update learning rate based on frames processed"""
-        self.frame_count += 1
-        self.scheduler.step()
+        return action
+
 
     # Train step: sample a batch from the replay buffer and train the agent
     # The batch contains (state, action, reward, next_state, done) tuples
@@ -204,21 +206,64 @@ class DQNAgent:
             # `targets` represents the TD (Temporal Difference) target, which is the 
             # best estimate of the total return for the next state
             targets = rewards + self.gamma * target_q * (~dones)
-            targets = torch.clamp(targets, -1.5, 1.5)     # gradient clipping to prevent exploding gradients (targets, -10, 10)
+            # limit the range of target values to prevent extreme updates to the network weights
+            
+            if self.toggle1 and 26000 <= self.frame_count:
+                print(f"> Frame {self.frame_count}:")
+                print(f"   Rewards: min={rewards.min().item():.3f}, max={rewards.max().item():.3f}")
+                print(f"   Q-values: min={q_vals.min().item():.3f}, max={q_vals.max().item():.3f}")
+                print(f"   Target Q: min={target_q.min().item():.3f}, max={target_q.max().item():.3f}")
+                print(f"   Targets: min={targets.min().item():.3f}, max={targets.max().item():.3f}")
+                self.toggle1 = False
+            targets = torch.clamp(targets, -1, 3)     # (targets, -10, 10)
 
         # Computes the loss between the predicted Q-values and the target Q-values.
         loss = self.loss_fn(q_vals, targets)
 
         self.optimizer.zero_grad()
         loss.backward()
-        # gradient clipping to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
+        # gradient clipping to prevent exploding gradients during backpropagation
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 3)
+        # grad_norm = torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
+        if self.toggle2 and self.frame_count > 26000:
+            print(f"> Gradient norm: {grad_norm.item()}")
+            self.toggle2 = False
+        
         self.optimizer.step()
 
-        # Update learning rate at the end of each training step
-        self.update_lr_scheduler()
+        # Update learning rate at the end of each training step --> move to training loop to update lr every environment step
+        # self.update_lr_scheduler()
+        # Update the target network using soft update after every training step 
+        # (not like hard update every 200 episodes)
+        self.soft_update_target()
 
         return loss.item()
+
+    # Update the target network with the weights of the Q-network
+    # This is done periodically to stabilize training
+    def update_target(self):
+        self.target_net.load_state_dict(self.q_net.state_dict())
+
+    # The target network is updated incrementally using a weighted average of its current weights 
+    # and the Q-network's weights. This provides smoother convergence and reduces oscillations during training
+    def soft_update_target(self):
+        """
+        Perform a soft update of the target network's parameters.
+        """
+        tau = Config.UPDATE_TAU  # Soft update coefficient (0 < tau << 1)
+        for target_param, q_param in zip(self.target_net.parameters(), self.q_net.parameters()):
+            target_param.data.copy_(tau * q_param.data + (1.0 - tau) * target_param.data)
+
+    # Update the learning rate scheduler
+    def update_learning_params(self):
+        """Update learning rate and beta (if PER) based on frames processed."""
+        # self.frame_count is incremented in the main loop BEFORE this call.
+
+        # Step the scheduler only after the decay start frame is reached
+        if self.frame_count > Config.LR_DECAY_START_FRAME:
+            # LinearLR steps based on how many times .step() is called
+            # It will decay over 'total_iters' calls to .step()
+            self.scheduler.step()
 
     # agent shifts from exploring the environment to exploiting over episodes (rather than frames/transitions)
     def decay_epsilon(self):
