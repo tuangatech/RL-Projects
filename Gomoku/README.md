@@ -1,13 +1,86 @@
-# Gomoku Self-Play Agent
+# Gomoku AI with Deep Q-Learning
 
 ## Game
-Gomoku with 6x6 board, the first to 4 consecutive stones (horizontal, vertical, diagonal) wins.
+Gomoku with 6x6 board, the first to 4 consecutive stones (horizontal, vertical, diagonal) wins. Each action corresponds to placing a stone on a cell.
 
-## Target
-- Self-play training. 
-- A Pygame interface for humans to play against the trained model.
+## Solution: DQN Agent
 
-## Solution
+This solution trains an AI agent to play Gomoku 6,6,4 using a Deep Q-Network (DQN) approach enhanced with several modern reinforcement learning techniques. The training is performed via self-play. A Pygame interface for humans to play against the trained model.
+
+**Expected Outcome**: Agent evolves from random moves to sophisticated strategies (e.g., forks, double threats) within 30,000 episodes.
+
+### 1. Environment Design:
+
+- A custom OpenAI Gym environment (GomokuEnv) models the game dynamics.
+- It manages the 6x6 board state, player turns (1 and -1), valid moves, win/draw/invalid move detection.
+- Smaller than standard 15×15 Gomoku to accelerate training while retaining strategic depth.
+
+### 2. State Representation:
+
+- The state provided to the agent is a 2-channel tensor of shape (`2, 6, 6`).
+- Channel 1 represents the positions of the current player's stones (1 where stones exist, 0 otherwise).
+- Channel 2 represents the positions of the opponent's stones.
+- This spatial representation is suitable for processing by convolutional layers.
+
+### 3. Network Architecture (Dueling DQN with CNN):
+
+- A Convolutional Neural Network (CNN) serves as the function approximator for the Q-values. It uses `torch.nn`.
+- The network takes the (2, 6, 6) state tensor as input.
+- It employs convolutional layers (`nn.Conv2d`) with Batch Normalization (`nn.BatchNorm2d`) and `LeakyReLU` activation.
+- Convolutional backbone (pattern extraction):
+- `Conv(2→32, kernel=3×3, padding=1) → BatchNorm → LeakyReLU`
+- `Conv(32→64, kernel=3×3, padding=1) → BatchNorm → LeakyReLU`
+- __Why Convolutional networks?__ Use kernel to extract relevant spatial features and patterns from the board state (e.g., stone alignments).
+- The architecture implements **Dueling DQN**. After the convolutional base, the network splits into two streams:
+  - A Value Stream: Outputs a single scalar representing the value of the state, _V(s)_.
+  - An Advantage Stream: Outputs a value for each possible action (36 actions), representing the advantage of taking that action compared to others in that state, _A(s,a)_.
+- These streams are combined to produce the final Q-values for each action: Q(s,a)=V(s)+(A(s,a) - mean_A)
+
+### 4. Learning Algorithm (Double DQN):
+
+- The core learning uses Q-learning updates adapted for deep networks.
+- **Experience Replay**: Transitions (`state, action, reward, next_state, done`) are stored in a `ReplayBuffer` of fixed capacity (`Config.REPLAY_CAPACITY`).
+- Training Steps: During training, batches of experiences are randomly sampled from the buffer. This decorrelates updates and improves stability.
+- Double DQN: To mitigate the overestimation bias common in standard DQN, the target Q-value calculation is modified:
+  - The _online network_ (`q_net`) determines the best action (a*) to take in the `next_state`.
+  - The _target network_ (`target_net`) evaluates the Q-value of taking that action a∗ in the `next_state`.
+  - The target value becomes: T = reward + γ⋅Q_target(next_state, a∗)⋅(1−done).
+- Loss Function: The Mean Squared Error (MSE) between the Q-value predicted by the online network for the action taken (`q_vals`) and the calculated target value (`targets`) is minimized using the Adam optimizer.
+- Gradient Clipping: Gradient norms are clipped (`torch.nn.utils.clip_grad_norm_`) during backpropagation to prevent exploding gradients and further stabilize training.
+
+### 5. Target Network & Soft Updates:
+
+- A separate `target_net` with the same architecture as the `q_net` is used to provide stable targets during the Bellman update.
+- Soft Updates: Instead of periodically copying weights, the `target_net` weights are updated slowly and smoothly after each training step by blending them with the `q_net` weights: `target_weights = tau * online_weights + (1 - tau) * target_weights`, where tau (Config.UPDATE_TAU) is a small constant (e.g., 0.005).
+
+### 6. Training Strategy & Exploration:
+
+- Self-Play: The agent learns by playing games against itself (its current policy), not fixed opponent, to adapt to improving strategies, avoiding overfitting to static adversaries. Experiences from both players' perspectives are stored in the replay buffer (with rewards appropriately flipped for the opponent's moves).
+- Epsilon-Greedy Exploration: To balance exploration and exploitation, the agent uses an epsilon-greedy policy (`DQNAgent.act`). With probability `epsilon`, it chooses a random valid action; otherwise, it chooses the action with the highest Q-value.
+- Exploration Decay: epsilon starts high (`Config.EPSILON_START`) and is gradually decayed over training episodes/frames (`Config.EPSILON_DECAY`) towards a minimum value (`Config.EPSILON_MIN`), shifting the agent from exploration to exploitation.
+- Warm-up: Training updates only begin after a certain number of experiences (`Config.TRAIN_START`) have been collected in the replay buffer.
+- Learning Rate Scheduling: A `LinearLR` scheduler dynamically adjusts the optimizer's learning rate during training, decreasing it from `Config.LEARNING_RATE` to `Config.MIN_LEARNING_RATE` starting after `Config.LR_DECAY_START_FRAME` frames, potentially improving convergence.
+- Cyclical validation: Test vs. random agent every 1,000 episodes to track progress.
+
+### 7. Reward Function (Terminal + Heuristic Shaping):
+
+- Terminal Rewards: Clear rewards are given upon game termination: `Config.REWARD_WIN` (e.g., +1.0) for winning, `Config.REWARD_DRAW` (e.g., -0.1) for a draw, and `Config.REWARD_INVALID_MOVE` (e.g., -1.0) for attempting an illegal move.
+- Action masking: occupied cells get Q(s,a) = −100 to avoid exploration waste.
+- Heuristic / "Potential-Based" Reward Shaping: Dense, intermediate rewards are calculated at each step to potentially guide learning:
+  - A "threat score" is computed based on Gomoku patterns (`Config.PATTERN_SCORES`) using the `_calculate_global_threat` helper function.
+  - The step reward includes terms based on the change (delta) in the player's own threat score and the change in the opponent's threat score (rewarding increases in own threats and decreases in opponent threats, i.e., blocking). This resembles potential-based shaping but is calculated via heuristic pattern differences.
+  - An additional reward (`Config.REWARD_FORK`) is given if the move creates a fork.
+  - A small penalty (`Config.REWARD_PASSIVE`) is applied for moves that don't alter the threat landscape.
+- _Caveat_: The effectiveness of complex reward shaping heavily depends on careful tuning of the relative magnitudes of heuristic vs. terminal rewards. If not balanced properly, it can lead to suboptimal policies focused on heuristics rather than winning. Simplifying this is often a key step in debugging.
+
+### Improvement
+1. **Monte Carlo Tree Search (MCTS)** : Combine reinforcement learning with MCTS to improve decision-making during gameplay.
+2. Self-play training: periodically save checkpoints of the agent and **train against older versions** to simulate diverse opponents.
+3. Consider using **prioritized experience replay** to prioritize important transitions (e.g., those leading to wins or losses). This can accelerate learning.
+
+========
+## Implementation
+
 ### 1. Environment
 - Gym API
   - Inherit from `gym.Env`; define `observation_space = Box(0,2, shape=(2,6,6))` (one channel per player) and `action_space = Discrete(36)`.
@@ -26,7 +99,6 @@ Gomoku with 6x6 board, the first to 4 consecutive stones (horizontal, vertical, 
   - A line of 2 consecutive stones with 2 open ends receives a reward of 0.03
   - A line of 3 consecutive stones with 1 open end receives a reward of 0.1
   - A line of 3 consecutive stones with 2 open ends receives a reward of 0.4
-  - A stone is placed next to another stone (either belongs to current player or opponent) receives 0.01
   - A stone creating a fork of 2 lines of length-3, a fork has at least 1 open end, receives 0.3
   - A defensive reward is calculated by opponent's [threat after - threat before] the stone is placed
 
@@ -80,6 +152,7 @@ Gomoku with 6x6 board, the first to 4 consecutive stones (horizontal, vertical, 
 > - The output of the network is a vector of **Q-values**, one for each of the 36 positions on the board.
 > - Some positions on the board may already be occupied, making them illegal moves. To handle this, mask illegal moves by setting their Q-values to −∞ before selecting an action. This ensures the agent never chooses an invalid position.
 > - During **training**, use an **epsilon-greedy** policy to balance exploration and exploitation. During **evaluation**, select the action with the highest Q-value after masking illegal moves.
+> - **Dueling DQN** architect is an excellent choice for Gomoku because it separates the estimation of state values (V(s)) and action advantages (A(s, a)). This helps the agent prioritize actions that improve the overall state value, even when the immediate rewards are sparse.
 
 
 ### 4. Stable Training Practices
@@ -196,7 +269,7 @@ Checkpointing
 With these components you’ll get a robust, sample‐efficient Gomoku agent capable of learning from self‑play and providing an interactive GUI for human challenges.
 
 
-## Implementation
+## Detailed Implementation
 
 \$ python -m venv gomoku-env
 
@@ -219,7 +292,14 @@ With these components you’ll get a robust, sample‐efficient Gomoku agent cap
 - More checking (for reward shaping, threat_map), slower
 - Loss curve has any meaning? Not performance related. It tracks the training loss (typically MSE loss) between the predicted Q-values and the target Q-values. A low loss means:→ the network is getting better at fitting the targets it's given during training. It only tells you how well your model is fitting the experience data (replay buffer) it has seen. BUT — it does not guarantee the agent plays well. It says nothing about: Whether the experience was good. Whether the learned policy is actually strategic.
 - Reduce epsilon decay rate, plot epsilon
-
+- Ensure that the magnitude of intermediate rewards (e.g., threat-based rewards and fork rewards) is small compared to the win reward. This ensures that the agent prioritizes winning over accumulating intermediate rewards.
+- intermediate rewards: REWARD_LIVE3
+  - REWARD_LIVE2: weak threat
+  - REWARD_SEMI_OPEN3: a moderate threat, as it requires the opponent to block to prevent a win
+  - REWARD_LIVE3: a strong threat because it can easily become a winning line
+  - REWARD_FORK: A fork represents a significant strategic advantage, as it forces the opponent into a defensive position.
+  - As training progresses, you may want to reduce the influence of intermediate rewards (e.g., Live 2, Semi-Open 3) to encourage the agent to focus on winning. 
+- To **verify reward**, we need to print out patterns detected from boards, print the board before and after a move, print 4-channel observation, print reward components to check if they match our expectation.
 
 ### Build a Deep Q-Network (DQN) Agent
 
@@ -277,26 +357,3 @@ With these components you’ll get a robust, sample‐efficient Gomoku agent cap
   - Check if placing your stone (+1) creates a line of 3 for you.
   - Later, you can also add logic to block the opponent’s lines (by checking -1 patterns).
 
-
-----
-### Prompts
-
-**Prompt 1**
-Game: Gomoku with 6x6 board, the first to 4 consecutive stones (horizontal, vertical, diagonal) wins.
-Need: Self-play training. A Pygame interface for humans to play against the trained model.
-
-Provide high level design for Reinforcement learning to implement with below points:
-- Design agents using DQN. 
-- Develop with libraries PyTorch, Numpy, OpenAI Gym, etc. 
-- Should we use convolutional network or MLP?
-- What practices to have stable training?
-- Environment to Track the board state, validate moves and Check for terminal states (win/loss/draw).
-- Sparse rewards challenge: +1 for win, -1 for loss, 0 otherwise. Small positive reward if an agent can create a line of 2 or 3 stones with open ends. Similarly Small negative reward for allowing the opponent to create such threats. Any better reward?
-- Use GPU
-- Evaluate agents against baselines to ensure learning.
-- Balancing exploration and exploitation.
-- Parallel self-play to speed up training
-- Mask invalid moves
-
-**Prompt 2**
-Guide me step by step to build Gomoku solution.
