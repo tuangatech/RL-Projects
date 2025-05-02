@@ -20,7 +20,7 @@ class GomokuEnv(gym.Env):
 
         # 4 channels: [player's stones, opponent's stones, player's win threat, opponent's win threat]
         self.observation_space = spaces.Box(
-            low=0, high=1, shape=(4, board_size, board_size), dtype=np.uint8
+            low=0, high=1, shape=(2, board_size, board_size), dtype=np.uint8
         )
 
         self.reset() # Initialize the environment
@@ -39,14 +39,17 @@ class GomokuEnv(gym.Env):
 
         # If the action is invalid (game is over or cell is already occupied)
         if self.done or self.board[row, col] != 0:
-            return self._get_obs(), Config.REWARD_INVALID_MOVE, True, {"invalid": True}  # invalid move, reward = -1.0
+            # self.done = True  # *** End the game if invalid move
+            # self.done can be True or False, but the action is invalid
+            return self._get_obs(), Config.REWARD_INVALID_MOVE, self.done, {"invalid": True}  # invalid move, reward = -1.0
         
         opponent = -self.current_player
 
         # Before move: calculate threats and soon-win threats
         player_threat_before = self._calculate_global_threat(self.current_player)
         opponent_threat_before = self._calculate_global_threat(opponent)
-        block_threats_before = np.sum(self._get_win_threat_map(opponent))
+        # player_win_threats_before = np.sum(self._get_win_threat_map(self.current_player))
+        # opponent_win_threats_before = np.sum(self._get_win_threat_map(opponent))
 
         # Place the current player's stone on the board
         self.board[row, col] = self.current_player
@@ -71,11 +74,13 @@ class GomokuEnv(gym.Env):
         player_threat_after = self._calculate_global_threat(self.current_player)
         opponent_threat_after = self._calculate_global_threat(opponent)
         # Count where the player who just moved can win next turn
-        win_threats_after = np.sum(self._get_win_threat_map(self.current_player))
+        # player_win_threats_after = np.sum(self._get_win_threat_map(self.current_player))
         # Count where the *opponent* (next player) can win next turn
-        block_threats_after = np.sum(self._get_win_threat_map(opponent))
-        # How many opponent winning chances we blocked
-        blocked_threats = block_threats_before - block_threats_after
+        # opponent_win_threats_after = np.sum(self._get_win_threat_map(opponent))
+        # How many opponent winning chances we blocked by that move
+        # blocked_threats = opponent_win_threats_before - opponent_win_threats_after
+        # How many new winning chances we created for the player who just moved
+        # added_threats = player_win_threats_after - player_win_threats_before
 
         # Reward Calculation Components (based on the player who just moved)
 
@@ -83,28 +88,24 @@ class GomokuEnv(gym.Env):
         player_threat_delta_reward = player_threat_after - player_threat_before
         # Reward for reducing opponent threats (Strategic Defense)
         opponent_threat_delta_reward = opponent_threat_before - opponent_threat_after
-        # Reward for creating forks (using the new fork check)
-        fork_reward = Config.REWARD_FORK if self._check_fork(row, col, self.current_player) else 0        
-        # Punish for a passive move (no change in threats)
-        passive_reward = Config.REWARD_PASSIVE if player_threat_delta_reward == 0 and opponent_threat_delta_reward == 0 else 0
-        # Reward if after this move, there are cells where current player can win next move
-        soon_win_reward = Config.REWARD_SOON_WIN * win_threats_after if win_threats_after > 0 else 0
-        block_soon_win_reward = Config.REWARD_BLOCK_SOON_WIN * blocked_threats if blocked_threats > 0 else 0
 
-        reward = (player_threat_delta_reward + 
-                  opponent_threat_delta_reward + 
-                  fork_reward + 
-                  passive_reward + 
-                  soon_win_reward + 
-                  block_soon_win_reward)
+        # Reward for creating forks (using the new fork check)
+        fork_reward = Config.REWARD_FORK if self._check_fork(row, col, self.current_player) else 0 
+
+        # Punish for a passive move (no change in threats)
+        # pushes the agent to take meaningful actions rather than random placements
+        passive_reward = Config.REWARD_PASSIVE if player_threat_delta_reward == 0 and opponent_threat_delta_reward == 0 else 0
+
+        # Reward if after this move, there are new cells where current player can win next move - 
+        # already be rewarded by LIVE3 and FORK patterns (immediate win)
+        # soon_win_reward = Config.REWARD_SOON_WIN if added_threats > 0 else 0  #  * win_threats_after
+        # block_soon_win_reward = Config.REWARD_BLOCK_SOON_WIN if blocked_threats > 0 else 0  #  * blocked_threats
+
+        reward = (player_threat_delta_reward + opponent_threat_delta_reward + fork_reward + passive_reward)
+                #   soon_win_reward + block_soon_win_reward
         # print(f"Reward: {reward}, \n" \
         #       f"Player Threat Delta: {player_threat_delta_reward}, Opponent Threat Delta: {opponent_threat_delta_reward}, \n" \
-        #       f"Fork: {fork_reward}, Soon Win: {soon_win_reward}, Block Soon Win: {block_soon_win_reward}")
-        
-        # There are might be some LIVE3 and FORK patterns in the game, 
-        # so we need to clip the reward to avoid exploding gradients, to have stable training
-        # Too Aggressive Reward Clipping. Just apply clipping on target value, not on the reward itself.
-        # reward = np.clip(reward, -1.0, 1.0)
+        #       f"Fork: {fork_reward}, Block Soon Win: {block_soon_win_reward}, Passive: {passive_reward} \n")
 
         # Self-play training: switch turns to the other player
         # The reward is always from the perspective of the current player
@@ -132,54 +133,15 @@ class GomokuEnv(gym.Env):
         Shape: (num_channels, board_size, board_size)
         Channels: [Current Player Stones, Opponent Stones, Current Player Win Threat, Opponent Win Threat]
         """
-        obs_raw = np.zeros((2, self.board_size, self.board_size), dtype=np.uint8)
-        obs_raw[0, self.board == 1] = 1 # Player 1's stones
-        obs_raw[1, self.board == -1] = 1 # Player -1's stones
+        # Create binary layers for stones
+        my_stone = (self.board == self.current_player).astype(np.uint8)
+        opp_stone = (self.board == -self.current_player).astype(np.uint8)
 
-        current_player_threat_map = self._get_win_threat_map(self.current_player)
-        opponent_threat_map = self._get_win_threat_map(-self.current_player)
+        # Compute threat maps from each player's perspective
+        # my_threat = self._get_win_threat_map(self.current_player)
+        # opp_threat = self._get_win_threat_map(-self.current_player)
 
-        # Stack the channels. Ensure current player's view is always first.
-        if self.current_player == 1:
-            obs = np.stack([
-                obs_raw[0],               # P1 Stones (Current)
-                obs_raw[1],               # P-1 Stones (Opponent)
-                current_player_threat_map, # P1 Win Threat (Current)
-                opponent_threat_map       # P-1 Win Threat (Opponent)
-            ], axis=0)
-        else: # self.current_player == -1
-            obs = np.stack([
-                obs_raw[1],               # P-1 Stones (Current)
-                obs_raw[0],               # P1 Stones (Opponent)
-                current_player_threat_map, # P-1 Win Threat (Current)
-                opponent_threat_map       # P1 Win Threat (Opponent) - Note: Threat maps are calculated for the absolute player
-            ], axis=0)
-
-        # Ensure the threat maps in the observation are always from the perspective
-        # of the channels they are paired with (channel 0/1 is current/opponent).
-        # Let's adjust the stacking slightly for clarity:
-        p1_stones = (self.board == 1).astype(np.uint8)
-        p_minus1_stones = (self.board == -1).astype(np.uint8)
-        p1_threat = self._get_win_threat_map(1)
-        p_minus1_threat = self._get_win_threat_map(-1)
-
-        if self.current_player == 1:
-            obs = np.stack([
-                p1_stones,         # Channel 0: Current Player Stones
-                p_minus1_stones,   # Channel 1: Opponent Stones
-                p1_threat,         # Channel 2: Current Player Win Threat
-                p_minus1_threat    # Channel 3: Opponent Win Threat
-            ], axis=0)
-        else: # self.current_player == -1
-            obs = np.stack([
-                p_minus1_stones,   # Channel 0: Current Player Stones
-                p1_stones,         # Channel 1: Opponent Stones
-                p_minus1_threat,   # Channel 2: Current Player Win Threat
-                p1_threat          # Channel 3: Opponent Win Threat
-            ], axis=0)
-
-
-        return obs
+        return np.stack([my_stone, opp_stone], axis=0)  # , my_threat, opp_threat
 
     # Check if the current player has won by placing a stone at (row, col)
     def _check_win(self, row, col, player):
@@ -259,7 +221,9 @@ class GomokuEnv(gym.Env):
                             key = (pattern, start_r, start_c, dr, dc)
                             # Add the key to the set. Set handles uniqueness automatically.
                             scored_patterns.add(key)
-
+        # if scored_patterns:
+        #     for pattern, *_ in scored_patterns:
+        #         print(f"Pattern: {pattern}, score: {Config.PATTERN_SCORES[pattern]}")
         return sum(Config.PATTERN_SCORES[pattern] for pattern, *_ in scored_patterns)
 
     
@@ -272,92 +236,70 @@ class GomokuEnv(gym.Env):
         """
         fork_threat_count = 0
         board_size = self.board_size
-        check_length = Config.CHECK_SEQUENCE_LENGTH
+        max_pattern_length = max(len(p) for p in Config.PATTERN_SCORES)
 
         # Define the patterns that constitute a significant threat for a fork
-        fork_patterns = ["-XXX-", "-XXXo", "oXXX-"]
+        fork_patterns = ["-XXX-", "-XXX", "XXX-", "XX-X", "X-XX", "XX-XX"]
 
         # Directions to check
         directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
-        # Temporarily place the stone to evaluate the resulting state
         # We already placed the stone in the step function before calling this,
         # so we are checking the state *after* the move.
-
         # Check each direction for newly formed threats involving the cell (row, col)
         for dr, dc in directions:
-             # Extract sequence passing through (row, col)
-             # Need to check a sequence long enough to contain a pattern centered or near (row, col)
-             # Let's extract a sequence of length 7 (3 back, the stone, 3 forward) if possible.
-             # A simpler approach is to check segments of CHECK_SEQUENCE_LENGTH that *include* (row, col)
+            found_threat_in_this_direction = False
+            for start_offset in range(-(max_pattern_length - 1), 1):
+                start_r = row + start_offset * dr
+                start_c = col + start_offset * dc
+                # We need to check for patterns in segments of length `check_length` starting at `(r - i*dr, c - i*dc)`
+                # where `i` ranges from 0 to `check_length - 1`.
 
-             # Iterate through potential start points such that the segment includes (row, col)
-             # A segment starting at (row - i*dr, col - i*dc) of length L includes (row, col) if 0 <= i < L.
-             # We need to check segments of length `check_length` that contain (row, col).
-             # The potential start indices relative to (row, col) are from -(check_length - 1) to 0.
+                i = -start_offset # The index of (row, col) in the sequence starting at (start_r, start_c)
 
-             found_threat_in_this_direction = False
-             for start_offset in range(-(check_length - 1), 1):
-                 start_r = row + start_offset * dr
-                 start_c = col + start_offset * dc
+                # Get the sequence starting from (start_r, start_c)
+                sequence = self._get_sequence(start_r, start_c, dr, dc, max_pattern_length, player)
 
-                 # Check if this starting point is valid (sequence can start here)
-                 # It's valid if the whole sequence fits or extends correctly into boundaries
-                 # We already handle boundaries in _get_sequence, so just need to check if the start is on board
-                 # OR if it's just off board but the sequence comes back on.
-                 # A simpler check: if the calculated start_r, start_c, when combined with dr, dc, covers (row, col)
-                 # and the sequence length is sufficient.
+                # Check if any of the fork patterns are in this sequence
+                for pattern in fork_patterns:
+                    if pattern in sequence:
+                        found_threat_in_this_direction = True
+                    #   print(f">> pattern: {pattern} found in sequence: {sequence} at ({start_r}, {start_c})")
+                        break # Found a threat pattern in this direction, move to the next direction
 
-                 # Let's just iterate through all valid start points that *could* contain (row, col)
-                 # A line segment from (sr, sc) with length L in direction (dr, dc) includes (r, c) if
-                 # (r, c) = (sr + i*dr, sc + i*dc) for some 0 <= i < L.
-                 # This means sr = r - i*dr and sc = c - i*dc.
-                 # We need to check for patterns in segments of length `check_length` starting at `(r - i*dr, c - i*dc)`
-                 # where `i` ranges from 0 to `check_length - 1`.
-
-                 i = -start_offset # The index of (row, col) in the sequence starting at (start_r, start_c)
-
-                 # Get the sequence starting from (start_r, start_c)
-                 sequence = self._get_sequence(start_r, start_c, dr, dc, check_length, player)
-
-                 # Check if any of the fork patterns are in this sequence
-                 for pattern in fork_patterns:
-                     if pattern in sequence:
-                          found_threat_in_this_direction = True
-                        #   print(f">> pattern: {pattern} found in sequence: {sequence} at ({start_r}, {start_c})")
-                          break # Found a threat pattern in this direction, move to the next direction
-
-             if found_threat_in_this_direction:
-                 fork_threat_count += 1
+            if found_threat_in_this_direction:
+                fork_threat_count += 1
         # A fork is created if the move resulted in at least two distinct lines
         # containing significant threats (Live 3 or Semi-Open 4).
         return fork_threat_count >= 2
     
-    def _check_win_threat(self, r, c, player):
-        """
-        Checks if placing a stone at (r, c) results in a win for the player.
-        Assumes (r, c) is currently empty.
-        """
-        # Temporarily place the stone
-        self.board[r, c] = player
-        win = self._check_win(r, c, player)
-        # Remove the stone
-        self.board[r, c] = 0
-        return win
+    # def _check_win_threat(self, r, c, player):
+    #     """
+    #     Checks if placing a stone at (r, c) results in a win for the player.
+    #     Assumes (r, c) is currently empty.
+    #     """
+    #     # Temporarily place the stone
+    #     self.board[r, c] = player
+    #     win = self._check_win(r, c, player)
+    #     # Remove the stone
+    #     self.board[r, c] = 0
+    #     return win
     
+    # # see if placing a stone there would result in an immediate win,
+    # # providing the agent with information about both sides' immediate threats
+    # # Feeding threat maps into the observation space could help guide early 
+    # # learning by acting as a "cheat code" for detecting critical positions.
+    # def _get_win_threat_map(self, player):
+    #     """
+    #     Creates a binary map indicating where the player can win immediately.
+    #     """
+    #     threat_map = np.zeros((self.board_size, self.board_size), dtype=np.uint8)
 
-    def _get_win_threat_map(self, player):
-        """
-        Creates a binary map indicating where the player can win immediately.
-        """
-        threat_map = np.zeros((self.board_size, self.board_size), dtype=np.uint8)
-        board_size = self.board_size
+    #     # Iterate through all empty cells
+    #     empty_cells = np.argwhere(self.board == 0)
 
-        # Iterate through all empty cells
-        empty_cells = np.argwhere(self.board == 0)
+    #     for r, c in empty_cells:
+    #         if self._check_win_threat(r, c, player):
+    #             threat_map[r, c] = 1
 
-        for r, c in empty_cells:
-            if self._check_win_threat(r, c, player):
-                threat_map[r, c] = 1
-
-        return threat_map
+    #     return threat_map
